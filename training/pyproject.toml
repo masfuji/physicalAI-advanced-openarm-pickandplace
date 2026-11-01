@@ -1,0 +1,32 @@
+# A separate environment: the versions of torch and its dependencies needed for
+# training don't have to match the data collection environment.
+[project]
+name = "openarm-pick-place-training"
+version = "0.1.0"
+description = "ACT training and evaluation for the pick and place task"
+requires-python = "==3.12.*"
+dependencies = [
+    "google-genai",
+    "imageio-ffmpeg",
+    "lerobot[dataset,training]==0.6.1",
+    "mujoco",
+    "openarm-control",
+    "openarm-dataset",
+    "openarm-mujoco",
+    "plotly",
+    "python-dotenv",
+    "torch==2.11.0",
+    "torchvision==0.26.0",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu128" }
+torchvision = { index = "pytorch-cu128" }
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true

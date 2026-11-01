@@ -1,0 +1,3 @@
+[submodule "external/dora-openarm-vr"]
+	path = external/dora-openarm-vr
+	url = https://github.com/enactic/dora-openarm-vr.git

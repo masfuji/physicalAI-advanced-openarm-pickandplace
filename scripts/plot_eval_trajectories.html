@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>評価軌道（チャンク別）</title>
+<style>
+  .viz-root {
+    color-scheme: light;
+    --surface-1: #fcfcfb;
+    --text-primary: #0b0b0b;
+    --text-secondary: #52514e;
+    --line: #d9d8d3;
+    --scene: #52514e;
+    --series-1: #2a78d6;
+    --series-2: #eb6834;
+    --series-3: #1baf7a;
+    --series-4: #eda100;
+    --series-5: #e87ba4;
+    --series-6: #008300;
+    --series-7: #6250d6;
+    --series-8: #e34948;
+  }
+  @media (prefers-color-scheme: dark) {
+    .viz-root {
+      color-scheme: dark;
+      --surface-1: #1a1a19;
+      --text-primary: #f0efec;
+      --text-secondary: #c3c2b7;
+      --line: #3a3a37;
+      --scene: #c3c2b7;
+      --series-1: #3987e5;
+      --series-2: #d95926;
+      --series-3: #199e70;
+      --series-4: #c98500;
+      --series-5: #d55181;
+      --series-6: #008300;
+      --series-7: #9085e9;
+      --series-8: #e66767;
+    }
+  }
+  html, body { margin: 0; }
+  .viz-root {
+    background: var(--surface-1); color: var(--text-primary);
+    font: 14px/1.5 system-ui, "Segoe UI", "Yu Gothic UI", sans-serif;
+    padding: 20px 24px; min-height: 100vh; box-sizing: border-box;
+  }
+  h1 { font-size: 20px; margin: 0; font-weight: 600; }
+  h2 { font-size: 15px; margin: 18px 0 2px; font-weight: 600; }
+  .sub { color: var(--text-secondary); margin: 2px 0 14px; }
+  .filters { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; margin-bottom: 10px; }
+  .filters label { color: var(--text-secondary); }
+  select { font: inherit; padding: 4px 8px; margin-left: 6px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 6px; color: var(--text-secondary); }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .swatch { width: 18px; height: 3px; border-radius: 2px; }
+  .dash { width: 18px; border-top: 2px dashed var(--text-secondary); }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--scene); }
+  #plot3d { width: 100%; height: 68vh; min-height: 460px; }
+  #plotTime { width: 100%; height: 620px; }
+  table { border-collapse: collapse; margin-top: 8px; font-variant-numeric: tabular-nums; }
+  th, td { padding: 3px 18px 3px 0; text-align: right; border-bottom: 1px solid var(--line); }
+  th { font-weight: 500; color: var(--text-secondary); }
+  .note { color: var(--text-secondary); margin: 2px 0 6px; }
+</style>
+<script>/*PLOTLY_JS*/</script>
+</head>
+<body>
+<div class="viz-root">
+  <h1>評価軌道（チャンク別）</h1>
+  <p class="sub" id="summary"></p>
+  <div class="filters">
+    <label>開始姿勢<select id="condition"></select></label>
+    <label>エピソード<select id="episode"></select></label>
+    <label>腕<select id="arm">
+      <option value="right">右腕</option>
+      <option value="left">左腕</option>
+    </select></label>
+    <label>指令の軌道<select id="command">
+      <option value="on">表示</option>
+      <option value="off">非表示</option>
+    </select></label>
+  </div>
+  <div class="legend" id="legend"></div>
+  <div id="plot3d"></div>
+  <div id="detail">
+    <h2>時間ごとの動き</h2>
+    <p class="note">実線が実際の位置、破線がポリシーの指令です。色の変わり目が、次のチャンクを推論した瞬間です。</p>
+    <div id="plotTime"></div>
+    <h2>チャンクごとの数値</h2>
+    <p class="note">開始時のずれ: 新しいチャンクの最初の指令と、その時点の指先の距離。指令の飛び: 前のチャンクの最後の指令から、新しいチャンクの最初の指令までの距離。</p>
+    <table id="table"></table>
+  </div>
+</div>
+<script>
+const DATA = /*DATA*/null;
+const css = getComputedStyle(document.querySelector(".viz-root"));
+const color = (name) => css.getPropertyValue(name).trim();
+// Fixed order. A 30 s episode has at most 9 chunks: the 9th is drawn neutral.
+const chunkColor = (i) => color(i < 8 ? `--series-${i + 1}` : "--scene");
+const select = (id) => document.getElementById(id);
+const conditionLabel = {home_start: "ホーム姿勢", dataset_start: "学習データの姿勢"};
+
+DATA.conditions.forEach((condition, i) => {
+  const option = document.createElement("option");
+  option.value = i;
+  option.textContent = conditionLabel[condition.name] || condition.name;
+  select("condition").append(option);
+});
+
+function fillEpisodes() {
+  const condition = DATA.conditions[select("condition").value];
+  const previous = select("episode").value;
+  select("episode").innerHTML = "";
+  for (const ep of condition.episodes) {
+    const option = document.createElement("option");
+    option.value = ep.id;
+    option.textContent = `${ep.id}（${ep.placed ? "成功" : "失敗"}）`;
+    select("episode").append(option);
+  }
+  const all = document.createElement("option");
+  all.value = "all";
+  all.textContent = "すべて（実際の軌道のみ）";
+  select("episode").append(all);
+  select("episode").value = previous === "" ? "0" : previous;
+}
+
+function slice(series, start, end) {
+  // Include the next chunk's first point so that the line is continuous.
+  return series.map((values) => values.slice(start, end + 1));
+}
+
+function square(center, half, z, label) {
+  const xs = [-1, 1, 1, -1, -1].map((s) => center[0] + s * half);
+  const ys = [-1, -1, 1, 1, -1].map((s) => center[1] + s * half);
+  return {
+    type: "scatter3d", mode: "lines+text", x: xs, y: ys, z: xs.map(() => z),
+    text: [label, "", "", "", ""], textposition: "bottom center",
+    textfont: {color: color("--text-primary"), size: 13},
+    line: {color: color("--scene"), width: 4}, hovertemplate: `${label}<extra></extra>`,
+  };
+}
+
+function episodeTraces(ep, armName, showCommand, width) {
+  const arm = ep.arms[armName];
+  const armLabel = armName === "right" ? "右腕" : "左腕";
+  const traces = [];
+  arm.chunks.forEach((chunk, i) => {
+    const start = i * ep.chunk_length;
+    const end = start + ep.chunk_length;
+    const [x, y, z] = slice(arm.actual, start, end);
+    traces.push({
+      type: "scatter3d", mode: "lines", x, y, z,
+      line: {color: chunkColor(i), width},
+      hovertemplate: `エピソード ${ep.id}・${armLabel}<br>チャンク ${i + 1}（${chunk.seconds[0]}〜${chunk.seconds[1]} 秒）` +
+        `<br>x %{x:.3f} m, y %{y:.3f} m, z %{z:.3f} m<extra></extra>`,
+    });
+    traces.push({
+      type: "scatter3d", mode: "markers+text", x: [x[0]], y: [y[0]], z: [z[0]],
+      text: width > 3 ? [`${i + 1}`] : [""], textposition: "top center",
+      textfont: {color: color("--text-primary"), size: 13},
+      marker: {size: width > 3 ? 5 : 2, color: chunkColor(i), line: {color: color("--surface-1"), width: 2}},
+      hovertemplate: `チャンク ${i + 1} の開始<extra></extra>`,
+    });
+    if (showCommand) {
+      const [cx, cy, cz] = arm.command.map((v) => v.slice(start, end));
+      traces.push({
+        type: "scatter3d", mode: "lines", x: cx, y: cy, z: cz,
+        line: {color: chunkColor(i), width: 2, dash: "dash"}, opacity: 0.7,
+        hovertemplate: `チャンク ${i + 1} の指令<br>x %{x:.3f} m, y %{y:.3f} m, z %{z:.3f} m<extra></extra>`,
+      });
+    }
+  });
+  return traces;
+}
+
+const axis3d = (title) => ({
+  title: {text: title, font: {color: color("--text-secondary")}},
+  color: color("--text-secondary"), gridcolor: color("--line"), zerolinecolor: color("--line"),
+  backgroundcolor: color("--surface-1"), showbackground: true,
+});
+const layout3d = {
+  showlegend: false,
+  paper_bgcolor: color("--surface-1"),
+  margin: {l: 0, r: 0, t: 0, b: 0},
+  uirevision: "keep",
+  font: {color: color("--text-primary"), family: "system-ui, 'Segoe UI', 'Yu Gothic UI', sans-serif"},
+  scene: {
+    aspectmode: "data",
+    xaxis: axis3d("x 奥行き (m)"), yaxis: axis3d("y 左右 (m)"), zaxis: axis3d("z 高さ (m)"),
+    camera: {eye: {x: -1.5, y: -0.9, z: 1.0}, center: {x: 0, y: 0, z: -0.15}},
+  },
+  hoverlabel: {align: "left"},
+};
+
+function draw3d(condition, armName) {
+  const value = select("episode").value;
+  const tableTop = 1.005;
+  const traces = [
+    square(DATA.scene.cube, 0.05, tableTop, "Cube 配置範囲"),
+    square(DATA.scene.frame, 0.07, tableTop + 0.01, "黒い枠"),
+  ];
+  if (value === "all") {
+    for (const ep of condition.episodes) traces.push(...episodeTraces(ep, armName, false, 3));
+  } else {
+    const ep = condition.episodes[Number(value)];
+    traces.push(...episodeTraces(ep, armName, select("command").value === "on", 6));
+    const [x, y, z] = ep.cube;
+    traces.push({
+      type: "scatter3d", mode: "lines", x, y, z,
+      line: {color: color("--scene"), width: 3},
+      hovertemplate: "Cube<br>x %{x:.3f} m, y %{y:.3f} m, z %{z:.3f} m<extra></extra>",
+    });
+  }
+  Plotly.react("plot3d", traces, layout3d, {responsive: true, displaylogo: false});
+}
+
+function drawTime(ep, armName) {
+  const arm = ep.arms[armName];
+  const showCommand = select("command").value === "on";
+  const panels = [
+    {name: "x 奥行き (m)", actual: arm.actual[0], command: arm.command[0]},
+    {name: "y 左右 (m)", actual: arm.actual[1], command: arm.command[1]},
+    {name: "z 高さ (m)", actual: arm.actual[2], command: arm.command[2]},
+    {name: "グリッパー (rad)", actual: arm.gripper, command: arm.gripper_command},
+  ];
+  const traces = [];
+  const time = arm.gripper.map((_, i) => i / DATA.fps);
+  panels.forEach((panel, p) => {
+    const axes = {xaxis: "x", yaxis: p ? `y${p + 1}` : "y"};
+    arm.chunks.forEach((chunk, i) => {
+      const start = i * ep.chunk_length;
+      const end = start + ep.chunk_length;
+      traces.push({
+        ...axes, type: "scatter", mode: "lines",
+        x: time.slice(start, end + 1), y: panel.actual.slice(start, end + 1),
+        line: {color: chunkColor(i), width: 2},
+        hovertemplate: `チャンク ${i + 1}・実際<br>%{x:.2f} 秒: %{y:.3f}<extra></extra>`,
+      });
+      if (showCommand) {
+        traces.push({
+          ...axes, type: "scatter", mode: "lines",
+          x: time.slice(start, end), y: panel.command.slice(start, end),
+          line: {color: chunkColor(i), width: 2, dash: "dot"},
+          hovertemplate: `チャンク ${i + 1}・指令<br>%{x:.2f} 秒: %{y:.3f}<extra></extra>`,
+        });
+      }
+    });
+  });
+  const axis = (extra) => ({
+    color: color("--text-secondary"), gridcolor: color("--line"),
+    zerolinecolor: color("--line"), ...extra,
+  });
+  const layout = {
+    showlegend: false,
+    paper_bgcolor: color("--surface-1"), plot_bgcolor: color("--surface-1"),
+    margin: {l: 70, r: 10, t: 10, b: 45},
+    font: {color: color("--text-primary"), family: "system-ui, 'Segoe UI', 'Yu Gothic UI', sans-serif"},
+    grid: {rows: panels.length, columns: 1, pattern: "coupled", ygap: 0.08},
+    xaxis: axis({title: {text: "時間 (秒)"}}),
+    shapes: arm.chunks.slice(1).map((chunk) => ({
+      type: "line", xref: "x", yref: "paper", x0: chunk.seconds[0], x1: chunk.seconds[0], y0: 0, y1: 1,
+      line: {color: color("--line"), width: 1},
+    })),
+    hovermode: "closest",
+  };
+  panels.forEach((panel, p) => {
+    layout[p ? `yaxis${p + 1}` : "yaxis"] = axis({title: {text: panel.name, font: {size: 12}}});
+  });
+  Plotly.react("plotTime", traces, layout, {responsive: true, displaylogo: false});
+}
+
+function drawTable(ep, armName) {
+  const rows = ep.arms[armName].chunks.map((c, i) =>
+    `<tr><td>${i + 1}</td><td>${c.seconds[0].toFixed(1)}〜${c.seconds[1].toFixed(1)}</td><td>${c.path_m.toFixed(3)}</td>` +
+    `<td>${(c.start_gap_m * 100).toFixed(1)}</td><td>${c.command_jump_m === null ? "–" : (c.command_jump_m * 100).toFixed(1)}</td></tr>`);
+  select("table").innerHTML =
+    "<thead><tr><th>チャンク</th><th>時間 (秒)</th><th>移動距離 (m)</th><th>開始時のずれ (cm)</th><th>指令の飛び (cm)</th></tr></thead><tbody>" +
+    rows.join("") + "</tbody>";
+}
+
+function drawLegend(chunkCount) {
+  const chips = [];
+  for (let i = 0; i < chunkCount; i++) {
+    chips.push(`<span><i class="swatch" style="background:${chunkColor(i)}"></i>チャンク ${i + 1}</span>`);
+  }
+  if (select("command").value === "on" && select("episode").value !== "all") {
+    chips.push(`<span><i class="dash"></i>指令（色は同じ）</span>`);
+  }
+  if (select("episode").value !== "all") {
+    chips.push(`<span><i class="swatch" style="background:var(--scene);height:1px"></i>細い線は Cube</span>`);
+  }
+  select("legend").innerHTML = chips.join("");
+}
+
+function update() {
+  const condition = DATA.conditions[select("condition").value];
+  const armName = select("arm").value;
+  const value = select("episode").value;
+  const placed = condition.episodes.filter((e) => e.placed).length;
+  const length = condition.episodes[0].chunk_length;
+  select("summary").textContent =
+    `${conditionLabel[condition.name] || condition.name}から開始: ${condition.episodes.length} 回中 ${placed} 回成功。` +
+    `1チャンクは ${length} フレーム（約 ${(length / DATA.fps).toFixed(1)} 秒）で、その間はカメラを見ずに計画どおり動きます。ドラッグで回転、ホイールで拡大します。`;
+  draw3d(condition, armName);
+  const all = value === "all";
+  select("detail").style.display = all ? "none" : "";
+  if (all) {
+    drawLegend(Math.max(...condition.episodes.map((e) => e.arms[armName].chunks.length)));
+  } else {
+    const ep = condition.episodes[Number(value)];
+    drawLegend(ep.arms[armName].chunks.length);
+    drawTime(ep, armName);
+    drawTable(ep, armName);
+  }
+}
+
+fillEpisodes();
+select("condition").addEventListener("change", () => { fillEpisodes(); update(); });
+for (const id of ["episode", "arm", "command"]) select(id).addEventListener("change", update);
+update();
+</script>
+</body>
+</html>

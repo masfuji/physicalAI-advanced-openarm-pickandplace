@@ -1,0 +1,40 @@
+[project]
+name = "openarm-pick-place"
+version = "0.1.0"
+description = "Pick and place data collection with OpenArm, Meta Quest 3 and MuJoCo"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11"
+dependencies = [
+    "dora-openarm-data-collection-ui",
+    "dora-openarm-dataset-recorder",
+    "dora-openarm-kinematics",
+    "dora-openarm-mujoco>=0.5.0",
+    "dora-openarm-quitter",
+    "dora-openarm-vr",
+    "dora-rs>=0.5.0",
+    "dora-rs-cli>=1.1.0",
+    "fastapi",
+    "jinja2",
+    "opencv-python",
+    "pyarrow>=23.0.1",
+]
+
+[project.scripts]
+dora-openarm-camera-viewer = "openarm_pick_place.camera_viewer:main"
+dora-openarm-reset-button = "openarm_pick_place.reset_button:main"
+dora-openarm-vr-collection-ui = "openarm_pick_place.collection_ui:main"
+
+[tool.uv.sources]
+dora-openarm-data-collection-ui = { git = "https://github.com/enactic/dora-openarm-data-collection-ui" }
+dora-openarm-dataset-recorder = { git = "https://github.com/enactic/dora-openarm-dataset-recorder" }
+dora-openarm-kinematics = { git = "https://github.com/enactic/dora-openarm-kinematics" }
+dora-openarm-quitter = { git = "https://github.com/enactic/dora-openarm-quitter.git" }
+dora-openarm-vr = { path = "external/dora-openarm-vr", editable = true }
+
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]

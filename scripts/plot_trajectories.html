@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>グリッパー軌道</title>
+<style>
+  .viz-root {
+    color-scheme: light;
+    --surface-1: #fcfcfb;
+    --text-primary: #0b0b0b;
+    --text-secondary: #52514e;
+    --line: #d9d8d3;
+    --scene: #52514e;
+    --series-1: #2a78d6;
+    --series-2: #eb6834;
+  }
+  @media (prefers-color-scheme: dark) {
+    .viz-root {
+      color-scheme: dark;
+      --surface-1: #1a1a19;
+      --text-primary: #f0efec;
+      --text-secondary: #c3c2b7;
+      --line: #3a3a37;
+      --scene: #c3c2b7;
+      --series-1: #3987e5;
+      --series-2: #d95926;
+    }
+  }
+  html, body { margin: 0; }
+  .viz-root {
+    background: var(--surface-1); color: var(--text-primary);
+    font: 14px/1.5 system-ui, "Segoe UI", "Yu Gothic UI", sans-serif;
+    padding: 20px 24px; min-height: 100vh; box-sizing: border-box;
+  }
+  h1 { font-size: 20px; margin: 0; font-weight: 600; }
+  .sub { color: var(--text-secondary); margin: 2px 0 14px; }
+  .filters { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; margin-bottom: 10px; }
+  .filters label { color: var(--text-secondary); }
+  select { font: inherit; padding: 4px 8px; margin-left: 6px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 18px; margin-bottom: 6px; color: var(--text-secondary); }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .swatch { width: 18px; height: 3px; border-radius: 2px; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--scene); }
+  #plot { width: 100%; height: 72vh; min-height: 480px; }
+  details { margin-top: 14px; }
+  summary { cursor: pointer; color: var(--text-secondary); }
+  table { border-collapse: collapse; margin-top: 8px; font-variant-numeric: tabular-nums; }
+  th, td { padding: 3px 14px 3px 0; text-align: right; border-bottom: 1px solid var(--line); }
+  th:nth-child(2), td:nth-child(2) { text-align: left; }
+  th { font-weight: 500; color: var(--text-secondary); }
+</style>
+<script>/*PLOTLY_JS*/</script>
+</head>
+<body>
+<div class="viz-root">
+  <h1>グリッパー軌道</h1>
+  <p class="sub" id="summary"></p>
+  <div class="filters">
+    <label>結果<select id="outcome">
+      <option value="success">成功のみ</option>
+      <option value="fail">失敗のみ</option>
+      <option value="all">すべて</option>
+    </select></label>
+    <label>腕<select id="arm">
+      <option value="right">右腕</option>
+      <option value="left">左腕</option>
+      <option value="both">両腕</option>
+    </select></label>
+    <label>エピソード<select id="episode"><option value="all">すべて</option></select></label>
+  </div>
+  <div class="legend">
+    <span><i class="swatch" style="background:var(--series-1)"></i>グリッパー開</span>
+    <span><i class="swatch" style="background:var(--series-2)"></i>グリッパー閉</span>
+    <span><i class="dot"></i>開始位置</span>
+  </div>
+  <div id="plot"></div>
+  <details>
+    <summary>データを表で見る</summary>
+    <table id="table"></table>
+  </details>
+</div>
+<script>
+const DATA = /*DATA*/null;
+const css = getComputedStyle(document.querySelector(".viz-root"));
+const color = (name) => css.getPropertyValue(name).trim();
+const armLabel = {right: "右腕", left: "左腕"};
+
+// Split a trajectory into open / closed polylines with gaps. Each stretch
+// keeps its first point in the previous one so that the line is continuous.
+function segment(arm, closed) {
+  const out = {x: [], y: [], z: [], t: []};
+  for (let i = 0; i < arm.t.length; i++) {
+    const on = arm.closed[i] === closed;
+    const joining = i > 0 && arm.closed[i - 1] === closed;
+    if (on || joining) {
+      for (const k of ["x", "y", "z", "t"]) out[k].push(arm[k][i]);
+    }
+    if (!on && joining) {
+      for (const k of ["x", "y", "z", "t"]) out[k].push(null);
+    }
+  }
+  return out;
+}
+
+const traces = [];
+const owners = [];
+for (const ep of DATA.episodes) {
+  for (const armName of ["right", "left"]) {
+    const arm = ep.arms[armName];
+    for (const closed of [false, true]) {
+      const s = segment(arm, closed);
+      traces.push({
+        type: "scatter3d", mode: "lines", x: s.x, y: s.y, z: s.z, customdata: s.t,
+        line: {color: color(closed ? "--series-2" : "--series-1"), width: 3},
+        opacity: 0.75,
+        hovertemplate: `エピソード ${ep.id}（${ep.success ? "成功" : "失敗"}）・${armLabel[armName]}` +
+          `<br>${closed ? "閉" : "開"}・%{customdata:.1f} 秒` +
+          `<br>x %{x:.3f} m, y %{y:.3f} m, z %{z:.3f} m<extra></extra>`,
+      });
+      owners.push({ep, armName});
+    }
+    traces.push({
+      type: "scatter3d", mode: "markers", x: [arm.x[0]], y: [arm.y[0]], z: [arm.z[0]],
+      marker: {size: 4, color: color("--scene")},
+      hovertemplate: `エピソード ${ep.id}・${armLabel[armName]} の開始位置<extra></extra>`,
+    });
+    owners.push({ep, armName});
+  }
+}
+
+function square(center, half, z, label, shortLabel) {
+  const xs = [-1, 1, 1, -1, -1].map((s) => center[0] + s * half);
+  const ys = [-1, -1, 1, 1, -1].map((s) => center[1] + s * half);
+  return {
+    type: "scatter3d", mode: "lines+text", x: xs, y: ys, z: xs.map(() => z),
+    text: [shortLabel, "", "", "", ""], textposition: "bottom center",
+    textfont: {color: color("--text-primary"), size: 13},
+    line: {color: color("--scene"), width: 4}, hovertemplate: `${label}<extra></extra>`,
+  };
+}
+const tableTop = 1.005;
+const fixed = [
+  square(DATA.scene.cube, 0.05, tableTop, "Cube の配置範囲（±5cm）", "Cube 配置範囲"),
+  square(DATA.scene.frame, 0.07, tableTop + 0.01, "黒い枠（14cm 四方）", "黒い枠"),
+];
+for (const t of fixed) { traces.push(t); owners.push(null); }
+
+const select = (id) => document.getElementById(id);
+for (const ep of DATA.episodes) {
+  const option = document.createElement("option");
+  option.value = ep.id;
+  option.textContent = `${ep.id}（${ep.success ? "成功" : "失敗"}）`;
+  select("episode").append(option);
+}
+
+function shown(ep) {
+  const episode = select("episode").value;
+  if (episode !== "all") return ep.id === episode;
+  const outcome = select("outcome").value;
+  return outcome === "all" || (outcome === "success") === ep.success;
+}
+
+function update() {
+  const arm = select("arm").value;
+  const visible = owners.map((o) => !o || (shown(o.ep) && (arm === "both" || arm === o.armName)));
+  Plotly.restyle("plot", {visible});
+  const n = DATA.episodes.filter(shown).length;
+  const ok = DATA.episodes.filter((e) => e.success).length;
+  select("summary").textContent =
+    `全 ${DATA.episodes.length} エピソード（成功 ${ok}）のうち ${n} 本を表示。記録された関節角から順運動学で求めた指先間の位置です。ドラッグで回転、ホイールで拡大します。`;
+}
+
+const axis = (title) => ({
+  title: {text: title, font: {color: color("--text-secondary")}},
+  color: color("--text-secondary"), gridcolor: color("--line"), zerolinecolor: color("--line"),
+  backgroundcolor: color("--surface-1"), showbackground: true,
+});
+Plotly.newPlot("plot", traces, {
+  showlegend: false,
+  paper_bgcolor: color("--surface-1"),
+  margin: {l: 0, r: 0, t: 0, b: 0},
+  font: {color: color("--text-primary"), family: "system-ui, 'Segoe UI', 'Yu Gothic UI', sans-serif"},
+  scene: {
+    aspectmode: "data",
+    xaxis: axis("x 奥行き (m)"), yaxis: axis("y 左右 (m)"), zaxis: axis("z 高さ (m)"),
+    camera: {eye: {x: -1.5, y: -0.9, z: 1.0}, center: {x: 0, y: 0, z: -0.15}},
+  },
+  hoverlabel: {align: "left"},
+}, {responsive: true, displaylogo: false}).then(update);
+for (const id of ["outcome", "arm", "episode"]) select(id).addEventListener("change", update);
+
+select("table").innerHTML =
+  "<thead><tr><th>#</th><th>結果</th><th>長さ (秒)</th><th>右 移動距離 (m)</th><th>右 閉じた時間 (秒)</th><th>左 移動距離 (m)</th></tr></thead><tbody>" +
+  DATA.episodes.map((e) =>
+    `<tr><td>${e.id}</td><td>${e.success ? "成功" : "失敗"}</td><td>${e.arms.right.duration.toFixed(1)}</td>` +
+    `<td>${e.arms.right.path.toFixed(2)}</td><td>${e.arms.right.closed_seconds.toFixed(1)}</td>` +
+    `<td>${e.arms.left.path.toFixed(2)}</td></tr>`).join("") + "</tbody>";
+</script>
+</body>
+</html>
